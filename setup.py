@@ -1,4 +1,4 @@
-from distutils.core import setup, Extension
+from setuptools import setup, Extension
 
 winrandom1 = Extension('winrandom',
 	libraries=['Crypt32', 'Advapi32'],
