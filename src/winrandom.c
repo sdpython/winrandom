@@ -8,6 +8,42 @@ Pawel Krawczyk <pawel.krawczyk@hush.com>
 
 #include <Python.h>
 
+/////////////////////////////////////////////////////
+// from https://docs.python.org/3/howto/cporting.html
+/////////////////////////////////////////////////////
+
+struct module_state {
+    PyObject *error;
+};
+
+#if PY_MAJOR_VERSION >= 3
+#define GETSTATE(m) ((struct module_state*)PyModule_GetState(m))
+#else
+#define GETSTATE(m) (&_state)
+static struct module_state _state;
+#endif
+
+static PyObject *
+error_out(PyObject *m) {
+    struct module_state *st = GETSTATE(m);
+    PyErr_SetString(st->error, "something bad happened");
+    return NULL;
+}
+
+#if PY_MAJOR_VERSION >= 3
+
+static int winrandom_traverse(PyObject *m, visitproc visit, void *arg) {
+    Py_VISIT(GETSTATE(m)->error);
+    return 0;
+}
+
+static int winrandom_clear(PyObject *m) {
+    Py_CLEAR(GETSTATE(m)->error);
+    return 0;
+}
+
+/////////////////////////////////////////////////////
+
 PyObject *exception = NULL;
 
 #include <windows.h>
@@ -26,7 +62,7 @@ static PyObject *winrandom_range(PyObject *self, PyObject *args) {
 	HCRYPTPROV hProv;
 	unsigned long c;	// output random number
 	static unsigned long iContinousRndTest = 0L;
-	unsigned long upperLimitBytes, t;
+	unsigned long t;
 	double upperLimitBits; /* because ceil() returns DOUBLE */
 	unsigned long r; // upper limit, unsigned so we can catch negative arguments
 	int ok;
@@ -163,9 +199,11 @@ static PyMethodDef WinrandomMethods[] = {
 	{"long", winrandom_long, METH_VARARGS, LONG_TEXT },
 	{"bytes", winrandom_bytes, METH_VARARGS, BYTES_TEXT },
 	{"range", winrandom_range, METH_VARARGS, RANGE_TEXT },
+    {"error_out", (PyCFunction)error_out, METH_NOARGS, NULL},
 	{NULL, NULL, 0, NULL}
 };
 
+/*
 PyMODINIT_FUNC
 initwinrandom(void) {
 	PyObject *m;
@@ -180,3 +218,56 @@ initwinrandom(void) {
 
 	 //PyDict_SetItemString(d, "error", exception);
 }
+*/
+
+/////////////////////////////////////////////////////
+// from https://docs.python.org/3/howto/cporting.html
+/////////////////////////////////////////////////////
+
+
+static struct PyModuleDef moduledef = {
+        PyModuleDef_HEAD_INIT,
+        "winrandom",
+        NULL,
+        sizeof(struct module_state),
+        WinrandomMethods,
+        NULL,
+        winrandom_traverse,
+        winrandom_clear,
+        NULL
+};
+
+#define INITERROR return NULL
+
+PyMODINIT_FUNC
+PyInit_winrandom(void)
+
+#else
+#define INITERROR return
+
+void
+initmyextension(void)
+#endif
+{
+#if PY_MAJOR_VERSION >= 3
+    PyObject *module = PyModule_Create(&moduledef);
+#else
+    PyObject *module = Py_InitModule("myextension", winrandom_methods);
+#endif
+
+    if (module == NULL)
+        INITERROR;
+    struct module_state *st = GETSTATE(module);
+
+    st->error = PyErr_NewException("myextension.Error", NULL, NULL);
+    if (st->error == NULL) {
+        Py_DECREF(module);
+        INITERROR;
+    }
+
+#if PY_MAJOR_VERSION >= 3
+    return module;
+#endif
+}
+
+
