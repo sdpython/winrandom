@@ -24,9 +24,9 @@ static struct module_state _state;
 #endif
 
 static PyObject *
-error_out(PyObject *m) {
+error_out(PyObject *m, const char * message) {
     struct module_state *st = GETSTATE(m);
-    PyErr_SetString(st->error, "something bad happened");
+    PyErr_SetString(st->error, message);
     return NULL;
 }
 
@@ -44,14 +44,13 @@ static int winrandom_clear(PyObject *m) {
 
 /////////////////////////////////////////////////////
 
-PyObject *exception = NULL;
-
 #include <windows.h>
 #include <wincrypt.h>
 #include <stdio.h>
 #include <math.h>
 #include <stdio.h>
 #include <ctype.h>
+
 
 /* This function implements B.5.1.2 The Complex Discard Method from NIST SP800-90
  * http://csrc.nist.gov/publications/nistpubs/800-90A/SP800-90A.pdf
@@ -69,14 +68,12 @@ static PyObject *winrandom_range(PyObject *self, PyObject *args) {
 
 	ok = PyArg_ParseTuple(args, "l", &r);
 	if(!ok) {
-		PyErr_SetObject(exception, PyExc_ValueError);
+        PyErr_SetString(PyExc_ValueError, "unable to parse arguments");
 		return NULL;
 	}
 	if(r <= 1) {
-		// rand_max needs to be >1 because for 1 the upperLimitBits will be 0 and no random number
-		// will be returned; the logic of this function is that 0 <= n <= rand_max-1
-		PyErr_SetObject(exception, PyExc_ValueError);
-		return NULL;
+		return error_out(self, "rand_max needs to be >1 because for 1 the upperLimitBits will be 0 and no random number"
+                               "  will be returned; the logic of this function is that 0 <= n <= rand_max-1)");
 	}
 
 	/* try stronger crypto provider first */
@@ -84,8 +81,7 @@ static PyObject *winrandom_range(PyObject *self, PyObject *args) {
 	if(!ok) {
 		ok = CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT);
 		if(!ok) {
-			PyErr_SetString(exception, "Unable to acquire Windows random number generator");
-			return NULL;
+			return error_out(self, "Unable to acquire Windows random number generator");
 		}
 	}
 
@@ -107,15 +103,13 @@ static PyObject *winrandom_range(PyObject *self, PyObject *args) {
 		 */
 		retVal = CryptGenRandom(hProv, t, (BYTE *) &c);
 		if(!retVal) {
-			PyErr_SetString(exception, "Unable to fetch random data from Windows");
-			return NULL;
+			return error_out(self, "Unable to fetch random data from Windows");
 		}
 		/* FIPS 140-2 p. 44 Continuous random number generator test */
 		/* Check if previous number wasn't the same as current */
 		if(upperLimitBits > 15 && c == iContinousRndTest) {
-				PyErr_SetString(exception, "Continuous random number generator test failed");
-				return NULL;
-			}
+            return error_out(self, "Continuous random number generator test failed");
+        }
 		iContinousRndTest = c; /* preserve this value for continuous test */
 		if(c < (unsigned long) r) break; // found!
 	}
@@ -123,6 +117,7 @@ static PyObject *winrandom_range(PyObject *self, PyObject *args) {
 	CryptReleaseContext(hProv, 0);
 	return Py_BuildValue("k", c);
 }
+
 
 static PyObject *winrandom_bytes(PyObject *self, PyObject *args)
 {
@@ -133,35 +128,34 @@ static PyObject *winrandom_bytes(PyObject *self, PyObject *args)
 
 	ok = PyArg_ParseTuple(args, "I", &num_bytes);
 	if(!ok) {
-		PyErr_SetObject(exception, PyExc_ValueError);
+        PyErr_SetString(PyExc_ValueError, "unable to parse arguments");
 		return NULL;
 	}
 
 	s = malloc(num_bytes);
 	if(s == NULL) {
-		PyErr_SetObject(exception, PyExc_MemoryError);
+        PyErr_SetString(PyExc_MemoryError, "Memory issue");
 		return NULL;
 	}
 
 	// CryptoAPI
 	/* try stronger crypto provider first */
-		ok = CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT);
-		if(!ok) {
-			ok = CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT);
-			if(!ok) {
-				PyErr_SetString(exception, "Unable to acquire Windows random number generator");
-				return NULL;
-		}
-	}
+    ok = CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT);
+    if(!ok) {
+        ok = CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT);
+        if(!ok) {
+            return error_out(self, "Unable to acquire Windows random number generator");
+        }
+    }
 
 	ok = CryptGenRandom(hProv, (DWORD) num_bytes, (BYTE *) s);
 	if(!ok) {
-				PyErr_SetString(exception, "Unable to fetch random data from Windows");
-				return NULL;
-			}
+        return error_out(self, "Unable to fetch random data from Windows");
+    }
 
-	return Py_BuildValue("s#", s, num_bytes);
+	return Py_BuildValue("y#", s, num_bytes);
 }
+
 
 static PyObject *winrandom_long(PyObject *self, PyObject *args)
 {
@@ -170,25 +164,23 @@ static PyObject *winrandom_long(PyObject *self, PyObject *args)
 	int ok;
 
 	/* try stronger crypto provider first */
-			ok = CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT);
-			if(!ok) {
-				ok = CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT);
-				if(!ok) {
-					PyErr_SetString(exception, "Unable to acquire Windows random number generator");
-					return NULL;
+    ok = CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT);
+    if(!ok) {
+        ok = CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT);
+        if(!ok) {
+            return error_out(self, "Unable to acquire Windows random number generator");
 		}
 	}
 
 	//  Generate eight bytes of random data into pbRandomData.
-	ok = CryptGenRandom(hProv, (DWORD) sizeof(pbRandomData), 
-			(BYTE *) &pbRandomData);
+	ok = CryptGenRandom(hProv, (DWORD) sizeof(pbRandomData), (BYTE *) &pbRandomData);
 	if(!ok) {
-			PyErr_SetString(exception, "Unable to fetch random data from Windows");
-			return NULL;
+        return error_out(self, "Unable to fetch random data from Windows");
 	}
 
 	return Py_BuildValue("k", pbRandomData);
 }
+
 
 #define LONG_TEXT 	"winrandom.long() - get cryptographically strong pseudo-random long integer."
 #define BYTES_TEXT 	"winrandom.bytes(N) - get N cryptographically strong pseudo-random bytes."
@@ -199,7 +191,6 @@ static PyMethodDef WinrandomMethods[] = {
 	{"long", winrandom_long, METH_VARARGS, LONG_TEXT },
 	{"bytes", winrandom_bytes, METH_VARARGS, BYTES_TEXT },
 	{"range", winrandom_range, METH_VARARGS, RANGE_TEXT },
-    {"error_out", (PyCFunction)error_out, METH_NOARGS, NULL},
 	{NULL, NULL, 0, NULL}
 };
 
@@ -246,20 +237,20 @@ PyInit_winrandom(void)
 #define INITERROR return
 
 void
-initmyextension(void)
+initwinrandom(void)
 #endif
 {
 #if PY_MAJOR_VERSION >= 3
     PyObject *module = PyModule_Create(&moduledef);
 #else
-    PyObject *module = Py_InitModule("myextension", winrandom_methods);
+    PyObject *module = Py_InitModule("winrandom", winrandom_methods);
 #endif
 
     if (module == NULL)
         INITERROR;
     struct module_state *st = GETSTATE(module);
 
-    st->error = PyErr_NewException("myextension.Error", NULL, NULL);
+    st->error = PyErr_NewException("winrandom.WinRandomException", NULL, NULL);
     if (st->error == NULL) {
         Py_DECREF(module);
         INITERROR;
